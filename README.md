@@ -46,20 +46,30 @@ Supported formats: `maven2`, `npm`, `pypi`, `rubygems`, `nuget`, `docker` and `r
 |                      | RegistryAddress   | images (i.e, when registry is under NAT due to Nexus K8S deployment).|
 ===================================================================================================================
 | Mend Settings        | WSApiKey          | Mend API Key, can be found under the 'Integrate' tab in your         |
+|                      | or MendApikey     |                                                                      |
 |                      |                   | Mend organization.                                                   |
 -------------------------------------------------------------------------------------------------------------------
 | Mend Settings        | WSUserKey         | Mend User Key, can be found under the 'user profile' tab in          |
+|                      | or MendUserKey    |                                                                      |
 |                      |                   | your Mend organization.                                              |
 -------------------------------------------------------------------------------------------------------------------
 | Mend Settings        | WSProductName     | The Mend product that will aggregate all scanned repositories.       |
+|                      | or MendProductName|                                                                      |
 -------------------------------------------------------------------------------------------------------------------
-| Mend Settings        | WSCheckPolicies   | Whether to enable Mend policy check for scanned repositories.        |
+| Mend Settings        | WSCheckPolicies or| Whether to enable Mend policy check for scanned repositories.        |
+|                      | MendCheckPolicies |                                                                      |
 -------------------------------------------------------------------------------------------------------------------
 | Mend Settings        | WSLang            | (Optional) allow passing a comma seperated list of suffices of       |
-|                      |                   | artifacts to scan in Docker (default: empty).                        |
+|                      | or MendLang       | artifacts to scan in Docker (default: empty).                        |
 -------------------------------------------------------------------------------------------------------------------
 | Mend Settings        | WSUrl             | Mend server URL, can be found under the 'Integrate' tab in           |
-|                      |                   | your Mend organization.                                              |
+|                      | or MendUrl        | your Mend organization.                                              |
+-------------------------------------------------------------------------------------------------------------------
+| Mend Settings        | MendUA            | (OptionaL) If set to True Unified Agent will be used for scanning    |
+|                      |                   | otherwise Mend CLI will be used. (default: empty (False))                    |
+-------------------------------------------------------------------------------------------------------------------
+| Mend Settings        | MendUserEmail     | (OptionaL)The email should be set for using Mend CLI for scanning    |
+|                      |                   | (default: empty)                                                     |
 ===================================================================================================================
 -------------------------------------------------------------------------------------------------------------------
 | General Settings     | ThreadCount       | Multi-threading speeds up the scan preperation phase, but it depends |

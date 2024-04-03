@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import re
+import platform
 from configparser import ConfigParser
 from distutils.util import strtobool
 from multiprocessing import Pool, Manager
@@ -31,6 +32,9 @@ SUPPORTED_FORMATS = {'maven2', 'npm', 'pypi', 'rubygems', 'nuget', 'raw', 'docke
 DOCKER_TIMEOUT = 600
 VER_3_26 = ["3", "26"]
 
+MEND_WIN_URL = "https://downloads.mend.io/cli/windows_amd64/mend.exe"
+MEND_LINUX_URL = "https://downloads.mend.io/cli/linux_amd64/mend"
+MEND_MAC_OS = "https://downloads.mend.io/cli/darwin_amd64/mend"
 config = None
 
 
@@ -44,6 +48,7 @@ class Config:
     #     nexus_auth_token: str
     #     nexus_repos: str
     #     headers: dict
+    #     mendus : bool
 
     def __init__(self, conf: dict) -> str:
         def convert_to_basic_string(user_name: str, password: str):
@@ -81,6 +86,26 @@ class Config:
                     ret_l += ws_constants.LibMetaData.LangSuffix.__dict__[i]
                 self.ws_conn.ua_conf.set_include_suffices_to_scan(ret_l)
 
+        def download_mend_cli():
+            filename = os.path.basename(urlparse(self.mend_cli_url).path)
+            logger.debug(f"Downloading Mend CLI to {os.path.join(self.base_dir, filename)}")
+            resp = requests.get(url=self.mend_cli_url)
+            if resp.status_code == 200:
+                with open(os.path.join(self.base_dir, filename), 'wb') as f:
+                    f.write(resp.content)
+                self.mend_cli_file = os.path.join(self.base_dir, filename)
+                return "Mend CLI was downloaded successfully"
+            else:
+                self.mend_cli_file = ""
+                return "Mend CLI was not downloaded"
+
+        def get_mend_name_param(param_name):
+            try:
+                param_ = conf['Mend Settings'][param_name]
+                return param_name
+            except:
+                return param_name.replace("WS", "Mend")
+
         # Nexus Settings
         self.nexus_base_url = conf.get('Nexus Settings', 'NexusBaseUrl', fallback='http://localhost:8081').strip('/')
         self.nexus_alt_docker_registry_address = conf.get('Nexus Settings', 'NexusAltDockerRegistryAddress', fallback=None)
@@ -103,8 +128,8 @@ class Config:
         self.headers = {'Authorization': f'Basic {self.nexus_auth_token}',
                         'accept': 'application/json'}
         # Mend Settings
-        self.product_name = conf.get('Mend Settings', 'WSProductName', fallback='Nexus')
-        self.check_policies = conf.getboolean('Mend Settings', 'WSCheckPolicies', fallback=False)
+        self.product_name = conf.get('Mend Settings', get_mend_name_param('WSProductName'), fallback='Nexus')
+        self.check_policies = conf.getboolean('Mend Settings', get_mend_name_param('WSCheckPolicies'), fallback=False)
         self.policies = 'true' if self.check_policies else 'false'
         ws_name = f"ws-{__tool_name__.replace('_', '-')}"
         base_dir = conf.get('General Settings', 'WorkDir')
@@ -113,14 +138,28 @@ class Config:
         self.base_dir = base_dir
         self.is_docker_scan = False
         self.scan_dir = os.path.join(self.base_dir, '_wstemp')
+        self.mendua = (conf.get('Mend Settings', 'MendUA').lower() == "true")
+
+        if "windows" in platform.uname().system.lower():
+            self.mend_cli_url = MEND_WIN_URL
+        elif "linux" in platform.uname().system.lower():
+            self.mend_cli_url = MEND_LINUX_URL
+        else:
+            self.mend_cli_url = MEND_MAC_OS
+        if not self.mendua:
+            self.mend_url = conf.get('Mend Settings', get_mend_name_param('WSUrl'))
+            self.mend_email = conf.get('Mend Settings', 'MendUserEmail')
+            self.mend_user_key = conf.get('Mend Settings',get_mend_name_param('WSUserKey'))
+            logger.info(download_mend_cli())
+
         java_bin = conf.get('General Settings', 'JavaBin', fallback="java")
-        self.ws_conn = WS(user_key=conf['Mend Settings']['WSUserKey'],
-                          token=conf['Mend Settings']['WSApiKey'],
-                          url=conf.get('Mend Settings', 'WSUrl'),
+        self.ws_conn = WS(user_key=conf['Mend Settings'][get_mend_name_param('WSUserKey')],
+                          token=conf['Mend Settings'][get_mend_name_param('WSApiKey')],
+                          url=conf.get('Mend Settings', get_mend_name_param('WSUrl')),
                           java_bin=java_bin if java_bin else "java",
                           ua_path=self.base_dir,
                           tool_details=(f"ps-{__tool_name__.replace('_', '-')}", __version__))
-        set_lang_include(conf['Mend Settings'].get('WSLang', "").replace(" ", ""))
+        set_lang_include(conf['Mend Settings'].get(get_mend_name_param('WSLang'), "").replace(" ", ""))
 
         # General Settings
         self.threads_number = conf.getint('General Settings', 'ThreadCount', fallback=5)
@@ -308,8 +347,18 @@ def handle_docker_repo(component: dict, conf) -> tuple:
         docker_repo_url = get_docker_repo_url(repo)
 
     if docker_repo_url:
-        image_name = f"{docker_repo_url}/{manifest['name']}"
-        image_full_name = f"{image_name}:{manifest['tag']}"
+        try:
+            image_name = f"{docker_repo_url}/{manifest['name']}"
+            image_full_name = f"{image_name}:{manifest['tag']}"
+            tag = manifest['tag']
+        except:
+            no_manifest = component['assets'][0]["path"].split("/")
+            for i, el_ in enumerate(no_manifest):
+                if el_ == "manifests":
+                    image_name = (f"{docker_repo_url}/{no_manifest[i-1]}").replace("http://","").replace("https://","")
+                    image_full_name = f"{image_name}:{no_manifest[i+1]}"
+                    tag = no_manifest[i+1]
+                    break
 
         temp = '(?:% s)' % '|'.join(conf.nexus_docker_repos_images_include_l)
         if re.match(temp, image_full_name):
@@ -318,12 +367,16 @@ def handle_docker_repo(component: dict, conf) -> tuple:
                 docker_client = docker.from_env(timeout=DOCKER_TIMEOUT)
                 local_image = docker_client.images.list(image_full_name)
                 is_image_exists_locally = True if local_image.__len__() == 1 else False
+                #auth_header = base64.b64encode(conf.nexus_auth_token.encode()).decode()
+                #headers = {"X-Registry-Auth": auth_header}
 
                 # Configuring Nexus user and password are mandatory for non-anonymous Docker repositories
-                docker_client.login(username=conf.nexus_user, password=conf.nexus_password, registry=docker_repo_url)
+                if conf.nexus_user and conf.nexus_password:
+                    login_ = docker_client.login(username=conf.nexus_user, password=conf.nexus_password, registry=docker_repo_url)
                 pull_res = docker_client.images.pull(image_full_name)
+
                 logger.debug(f"Image ID: {image_full_name} successfully pulled")
-                ret = f"{image_name} {manifest['tag']}"  # removing : operator in favour of docker.includeSingleScan
+                ret = f"{image_name} {tag}"  # removing : operator in favour of docker.includeSingleScan
 
             except docker.errors.DockerException:
                 logging.exception(f"Error loading image: {image_full_name}")
@@ -356,7 +409,7 @@ def repo_worker(comp, repo_name, cur_dest_folder, headers, conf, d_images_q):
             d_images_q.put(image_id)
             conf.is_docker_scan = True
             conf.ws_conn.ua_conf.docker_includeSingleScan = image_id
-            execute_scan(conf, repo_name)
+            execute_scan(conf, repo_name, image_full_name)
             if is_image_exists_locally:
                 logger.info(f"{image_full_name} already exists locally prior to the scan - won't be removed")
             else:
@@ -390,7 +443,30 @@ def comp_worker(repo_name, component_assets, cur_dest_folder, headers, comp_name
     logger.info(f'Component {comp_name} has successfully downloaded')
 
 
-def execute_scan(config, repo_name) -> int:
+def execute_scan(config, repo_name, image_name = "") -> int:
+
+    def scan_by_cli(scan_dir, product_name, project_name= "", is_docker = False):
+        os.environ["MEND_URL"] = config.mend_url
+        os.environ["MEND_EMAIL"] = config.mend_email
+        os.environ["MEND_USER_KEY"] = config.mend_user_key
+        prd_prj = f"{product_name}//{project_name}" if project_name else f"{product_name}"
+        if not is_docker:
+            ret_code = os.system(f'{config.mend_cli_file} sca -d {scan_dir} -s {prd_prj} -u > "temp" 2>&1')
+            with open("temp", "r") as file:
+                output_contents = file.read()
+            substring_prefix = "Support token: "
+            start_position = output_contents.find(substring_prefix)
+            newline_char = "\n"
+            end_position = output_contents.find(newline_char, start_position)
+            sup_token = output_contents[start_position + len(substring_prefix):end_position] if end_position != -1 else ""
+        else:
+            ret_code = os.system(f'{config.mend_cli_file} image {scan_dir} -s {prd_prj} > "temp" 2>&1')
+            with open("temp", "r") as file:
+                output_contents = file.read()
+            sup_token = ""
+        os.remove("temp")
+        return (ret_code, output_contents, sup_token)
+
     config.ws_conn.ua_conf.productName = config.product_name
     config.ws_conn.ua_conf.checkPolicies = strtobool(config.policies)
     config.ws_conn.ua_conf.forceCheckAllDependencies = strtobool(config.policies)
@@ -400,14 +476,17 @@ def execute_scan(config, repo_name) -> int:
         config.ws_conn.ua_conf.resolveAllDependencies = True
         config.ws_conn.ua_conf.archiveExtractionDepth = 3
         config.ws_conn.ua_conf.archiveIncludes = list(ws_constants.UAArchiveFiles.ALL_ARCHIVE_FILES)
-        ret = config.ws_conn.scan_docker(product_name=config.product_name)
+        ret = config.ws_conn.scan_docker(product_name=config.product_name) if config.mendua else scan_by_cli(scan_dir=image_name, product_name=config.product_name, is_docker=True)
     else:
         # config.ws_conn.ua_conf.projectPerFolder = True
         ret = config.ws_conn.scan(scan_dir=os.path.join(config.scan_dir, repo_name),
-                                  product_name=config.product_name, project_name=repo_name)
-    logger.debug(f"Unified Agent standard output:\n {ret[1]}")
+                                      product_name=config.product_name, project_name=repo_name) \
+            if config.mendua else scan_by_cli(scan_dir=os.path.join(config.scan_dir, repo_name), product_name=config.product_name, project_name=repo_name)
+
+    logger.debug(f"Standard output:\n {ret[1]}")
     try:
-        app_status = config.ws_conn.get_last_scan_process_status(ret[2])
+        if ret[2]:
+            app_status = config.ws_conn.get_last_scan_process_status(ret[2])
     except ws_sdk.ws_errors.WsSdkServerInsufficientPermissions:
         logger.debug("Insufficient permissions to execute call")
 
@@ -460,12 +539,14 @@ NexusAltDockerRegistryAddress=
 
 
 [Mend Settings]
-WSUserKey=
-WSApiKey=
-WSProductName=Nexus
-WSCheckPolicies=False
-WSUrl=
-WSLang=
+MendUserKey=
+MendApiKey=
+MendProductName=Nexus
+MendCheckPolicies=False
+MendUrl=
+MendLang=
+MendUA=False
+MendUserEmail=
 
 [General Settings]
 ThreadCount=1
